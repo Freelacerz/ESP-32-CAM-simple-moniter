@@ -360,4 +360,4 @@ If you find this project useful:
 
 ---
 
-Made with ❤️ using ESP32-CAM, HLK-LD1020-P, and AHT30.
+Made by Freelacerz
