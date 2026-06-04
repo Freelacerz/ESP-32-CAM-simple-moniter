@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ESP-32-CAM Simple Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  /* Reset & Variables */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0a0c0f;
+    --surface:  #111418;
+    --border:   #1e2530;
+    --accent:   #00e5ff;
+    --accent2:  #ff6b35;
+    --warn:     #ff3b3b;
+    --ok:       #39ff7a;
+    --text:     #c8d8e8;
+    --muted:    #4a5568;
+    --mono:     'Share Tech Mono', monospace;
+    --sans:     'Rajdhani', sans-serif;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    overflow-x: hidden;
+  }
+
+  /* Scan-line overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,229,255,0.018) 2px,
+      rgba(0,229,255,0.018) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* Header */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    padding: 1.4rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,229,255,0.03);
+  }
+
+  header .logo-mark {
+    width: 36px; height: 36px;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    animation: pulse-ring 2.5s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  
+  header .logo-mark::after {
+    content: '';
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  @keyframes pulse-ring {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(0,229,255,0.4); }
+    50%       { box-shadow: 0 0 0 8px rgba(0,229,255,0); }
+  }
+
+  header h1 {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 1.5rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  header .sub {
+    font-family: var(--mono);
+    font-size: .7rem;
+    color: var(--muted);
+    letter-spacing: .08em;
+    margin-top: .15rem;
+  }
+
+  .status-pill {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    font-family: var(--mono);
+    font-size: .72rem;
+    color: var(--ok);
+    border: 1px solid var(--ok);
+    padding: .3rem .8rem;
+    border-radius: 2px;
+  }
+
+  .status-pill .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
+    animation: blink 1.2s step-start infinite;
+  }
+
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .config-btn {
+    margin-left: 1rem;
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .1em;
+    background: none;
+    border: 1px solid var(--muted);
+    color: var(--muted);
+    padding: .25rem .6rem;
+    cursor: pointer;
+    transition: border-color .2s, color .2s;
+  }
+
+  .config-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Main Grid */
+  main {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: auto auto auto auto;
+    gap: 1px;
+    background: var(--border);
+    min-height: calc(100vh - 73px);
+  }
+
+  .panel {
+    background: var(--surface);
+    padding: 1.6rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .panel-label {
+    font-family: var(--mono);
+    font-size: .62rem;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+  }
+
+  .panel-label::before {
+    content: '';
+    display: inline-block;
+    width: 14px; height: 1px;
+    background: var(--muted);
+  }
+
+  /* Metric values */
+  .metric-value {
+    font-family: var(--mono);
+    font-size: 3.8rem;
+    font-weight: 400;
+    line-height: 1;
+    color: var(--accent);
+    text-shadow: 0 0 30px rgba(0,229,255,0.35);
+  }
+
+  .metric-unit {
+    font-family: var(--mono);
+    font-size: .9rem;
+    color: var(--muted);
+    margin-top: .4rem;
+  }
+
+  .temp-hot .metric-value { color: var(--accent2); text-shadow: 0 0 30px rgba(255,107,53,0.35); }
+  .temp-cold .metric-value { color: #00ccff; text-shadow: 0 0 30px rgba(0,204,255,0.35); }
+
+  /* Motion ring */
+  .motion-ring {
+    width: 120px; height: 120px;
+    border-radius: 50%;
+    border: 2px solid var(--muted);
+    display: flex; align-items: center; justify-content: center;
+    margin: .5rem auto 1rem;
+    position: relative;
+    transition: border-color .3s;
+  }
+
+  .motion-ring.active {
+    border-color: var(--warn);
+    animation: radar-spin 1s linear infinite;
+    box-shadow: 0 0 30px rgba(255,59,59,0.4), inset 0 0 20px rgba(255,59,59,0.1);
+  }
+
+  .motion-ring.active::before {
+    content: '';
+    position: absolute;
+    width: 140px; height: 140px;
+    border: 1px solid rgba(255,59,59,0.3);
+    border-radius: 50%;
+    animation: radar-expand 1.5s ease-out infinite;
+  }
+
+  @keyframes radar-spin {
+    0%   { box-shadow: 0 0 30px rgba(255,59,59,0.2); }
+    50%  { box-shadow: 0 0 50px rgba(255,59,59,0.6); }
+    100% { box-shadow: 0 0 30px rgba(255,59,59,0.2); }
+  }
+
+  @keyframes radar-expand {
+    0% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(1.4); opacity: 0; }
+  }
+
+  .motion-inner {
+    font-family: var(--mono);
+    font-size: .75rem;
+    text-align: center;
+    color: var(--muted);
+    position: relative;
+    z-index: 1;
+  }
+
+  .motion-ring.active .motion-inner { color: var(--warn); }
+
+  .motion-status-text {
+    text-align: center;
+    font-family: var(--mono);
+    font-size: .8rem;
+    letter-spacing: .1em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .motion-status-text.active { color: var(--warn); }
+
+  /* Live stream */
+  .snap-area {
+    grid-column: span 2;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .snap-frame {
+    width: 100%;
+    aspect-ratio: 4/3;
+    background: #0d0f14;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .snap-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .snap-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column;
+    gap: .6rem;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: .72rem;
+    letter-spacing: .08em;
+    background: rgba(0,0,0,0.5);
+  }
+
+  .snap-icon {
+    width: 40px; height: 40px;
+    border: 1.5px solid var(--muted);
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.2rem;
+  }
+
+  .snap-meta {
+    display: flex;
+    gap: 1.5rem;
+    font-family: var(--mono);
+    font-size: .68rem;
+    color: var(--muted);
+    flex-wrap: wrap;
+  }
+
+  .snap-meta span { color: var(--accent); }
+
+  /* Chart panel */
+  .chart-panel {
+    grid-column: span 3;
+    position: relative;
+    height: 280px;
+  }
+
+  .chart-container {
+    position: relative;
+    height: 100%;
+    width: 100%;
+  }
+
+  /* Stats */
+  .stats-row {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 1.2rem 1.6rem;
+  }
+
+  .stat-label {
+    font-family: var(--mono);
+    font-size: .6rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: .5rem;
+  }
+
+  .stat-val {
+    font-family: var(--mono);
+    font-size: 1.5rem;
+    color: var(--text);
+  }
+
+  /* Log panel */
+  .log-panel {
+    grid-column: 1 / -1;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+
+  .log-panel::-webkit-scrollbar { width: 4px; }
+  .log-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  #log-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #log-list li {
+    font-family: var(--mono);
+    font-size: .68rem;
+    color: var(--muted);
+    padding: .35rem 0;
+    border-bottom: 1px solid rgba(30,37,48,0.5);
+    display: flex;
+    gap: 1rem;
+  }
+
+  #log-list li .ts { color: var(--accent); flex-shrink: 0; }
+  #log-list li.ev-motion .msg { color: var(--warn); }
+  #log-list li.ev-temp .msg { color: var(--text); }
+  #log-list li.ev-ok .msg { color: var(--ok); }
+
+  /* Toast notifications */
+  .toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .toast {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    padding: 1rem 1.5rem;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--text);
+    min-width: 300px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    animation: slideIn 0.3s ease-out;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .toast.motion { border-left-color: var(--warn); background: rgba(255,59,59,0.1); }
+  .toast.alert { border-left-color: var(--accent2); background: rgba(255,107,53,0.1); }
+  .toast.success { border-left-color: var(--ok); background: rgba(57,255,122,0.1); }
+
+  .toast-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1.2rem;
+    margin-left: 1rem;
+    padding: 0;
+  }
+
+  @keyframes slideIn {
+    from { transform: translateX(400px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  /* Corner decoration */
+  .panel::after {
+    content: '';
+    position: absolute;
+    top: 0; right: 0;
+    border-top: 20px solid var(--border);
+    border-left: 20px solid transparent;
+  }
+
+  /* Modal */
+  #cfg-modal {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(10,12,15,0.88);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #cfg-modal.open { display: flex; }
+
+  .cfg-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 2rem;
+    min-width: 340px;
+    font-family: var(--mono);
+    font-size: .8rem;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+
+  .cfg-box h2 {
+    font-family: var(--sans);
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 1.5rem;
+    font-size: 1.1rem;
+    letter-spacing: .1em;
+  }
+
+  .cfg-row { margin-bottom: 1rem; }
+
+  .cfg-row label {
+    display: block;
+    color: var(--muted);
+    margin-bottom: .3rem;
+    font-size: .65rem;
+    letter-spacing: .1em;
+  }
+
+  .cfg-row input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: .78rem;
+    padding: .4rem .7rem;
+    outline: none;
+  }
+
+  .cfg-row input:focus { border-color: var(--accent); }
+
+  .cfg-actions {
+    display: flex;
+    gap: .8rem;
+    margin-top: 1.5rem;
+  }
+
+  .cfg-actions button {
+    font-family: var(--mono);
+    font-size: .72rem;
+    letter-spacing: .08em;
+    padding: .5rem 1.2rem;
+    cursor: pointer;
+    border: 1px solid var(--accent);
+    background: none;
+    color: var(--accent);
+    transition: background .2s;
+  }
+
+  .cfg-actions button:hover { background: rgba(0,229,255,0.08); }
+
+  .cfg-actions .cancel {
+    border-color: var(--muted);
+    color: var(--muted);
+  }
+
+  .cfg-actions .cancel:hover { background: rgba(74,85,104,0.2); }
+
+  /* Responsive */
+  @media (max-width: 860px) {
+    main { grid-template-columns: 1fr 1fr; }
+    .snap-area { grid-column: span 2; }
+    .chart-panel { grid-column: span 2; }
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+    .toast-container { width: calc(100% - 40px); right: 20px; left: 20px; }
+    .toast { min-width: unset; }
+  }
+
+  @media (max-width: 540px) {
+    main { grid-template-columns: 1fr; }
+    .snap-area { grid-column: 1; }
+    .chart-panel { grid-column: 1; }
+    .stats-row { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark"></div>
+  <div>
+    <h1>ESP-32-CAM Monitor</h1>
+    <div class="sub">Simple Motion Detection Dashboard</div>
+  </div>
+  <button class="config-btn" onclick="openConfig()">⚙ CONFIG</button>
+  <div class="status-pill" id="conn-pill">
+    <div class="dot"></div>
+    <span id="conn-text">CONNECTING</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- Temperature -->
+  <div class="panel" id="temp-panel">
+    <div class="panel-label">Temperature · AHT30</div>
+    <div class="metric-value" id="temp-val">--.-</div>
+    <div class="metric-unit">°C</div>
+  </div>
+
+  <!-- Humidity -->
+  <div class="panel">
+    <div class="panel-label">Humidity · AHT30</div>
+    <div class="metric-value" id="hum-val">--.-</div>
+    <div class="metric-unit">% RH</div>
+  </div>
+
+  <!-- Motion -->
+  <div class="panel" id="motion-panel" style="text-align:center;">
+    <div class="panel-label" style="justify-content:center;">Radar · LD1020-P</div>
+    <div class="motion-ring" id="motion-ring">
+      <div class="motion-inner" id="motion-inner">IDLE</div>
+    </div>
+    <div class="motion-status-text" id="motion-text">NO MOTION</div>
+  </div>
+
+  <!-- Live Stream -->
+  <div class="panel snap-area">
+    <div class="panel-label">Live Stream · ESP32-CAM</div>
+    <div class="snap-frame" id="snap-frame">
+      <div class="snap-placeholder" id="snap-placeholder">
+        <div class="snap-icon">📷</div>
+        <div>LOADING STREAM...</div>
+      </div>
+      <img id="snap-img" src="" alt="live stream"/>
+    </div>
+    <div class="snap-meta">
+      CAPTURES: <span id="cap-count">0</span> &nbsp;|&nbsp;
+      LAST: <span id="cap-time">—</span>
+    </div>
+  </div>
+
+  <!-- Chart -->
+  <div class="panel chart-panel">
+    <div class="panel-label">Sensor Trend · 30 min</div>
+    <div class="chart-container">
+      <canvas id="tempHumidityChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="stat">
+      <div class="stat-label">Readings taken</div>
+      <div class="stat-val" id="stat-reads">0</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Captures</div>
+      <div class="stat-val" id="stat-caps">0</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Uptime</div>
+      <div class="stat-val" id="stat-uptime">0s</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Poll interval</div>
+      <div class="stat-val" id="stat-interval">1.5s</div>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="panel log-panel" style="grid-column:1/-1;">
+    <div class="panel-label">Event Log</div>
+    <ul id="log-list"></ul>
+  </div>
+
+</main>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- Config Modal -->
+<div id="cfg-modal">
+  <div class="cfg-box">
+    <h2>⚙ CONFIGURATION</h2>
+    <div class="cfg-row">
+      <label>ESP32 IP ADDRESS</label>
+      <input id="cfg-ip" type="text" placeholder="192.168.1.100" value="192.168.1.100"/>
+    </div>
+    <div class="cfg-row">
+      <label>POLL INTERVAL (ms)</label>
+      <input id="cfg-interval" type="number" value="1500" min="500" max="5000"/>
+    </div>
+    <div class="cfg-row">
+      <label>⚠️ HIGH TEMPERATURE ALERT (°C)</label>
+      <input id="cfg-temp-high" type="number" value="35" min="20" max="60"/>
+    </div>
+    <div class="cfg-row">
+      <label>❄️ LOW TEMPERATURE ALERT (°C)</label>
+      <input id="cfg-temp-low" type="number" value="10" min="0" max="25"/>
+    </div>
+    <div class="cfg-actions">
+      <button onclick="saveConfig()">SAVE & CONNECT</button>
+      <button class="cancel" onclick="closeConfig()">CANCEL</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Configuration ────────────────────────────────────────────────────────
+let ESP_IP              = localStorage.getItem('esp_ip')         || '192.168.1.100';
+let POLL_MS             = parseInt(localStorage.getItem('poll_ms') || '1500');
+let TEMP_HIGH_ALERT     = parseInt(localStorage.getItem('temp_high') || '35');
+let TEMP_LOW_ALERT      = parseInt(localStorage.getItem('temp_low') || '10');
+let pollTimer           = null;
+let prevCapCount        = 0;
+let chartInstance       = null;
+let sensorHistory       = [];
+let MAX_HISTORY         = 30;
+
+document.getElementById('cfg-ip').value           = ESP_IP;
+document.getElementById('cfg-interval').value    = POLL_MS;
+document.getElementById('cfg-temp-high').value   = TEMP_HIGH_ALERT;
+document.getElementById('cfg-temp-low').value    = TEMP_LOW_ALERT;
+
+function openConfig() {
+  document.getElementById('cfg-modal').classList.add('open');
+}
+
+function closeConfig() {
+  document.getElementById('cfg-modal').classList.remove('open');
+}
+
+function saveConfig() {
+  ESP_IP              = document.getElementById('cfg-ip').value.trim();
+  POLL_MS             = parseInt(document.getElementById('cfg-interval').value);
+  TEMP_HIGH_ALERT     = parseInt(document.getElementById('cfg-temp-high').value);
+  TEMP_LOW_ALERT      = parseInt(document.getElementById('cfg-temp-low').value);
+
+  localStorage.setItem('esp_ip', ESP_IP);
+  localStorage.setItem('poll_ms', POLL_MS);
+  localStorage.setItem('temp_high', TEMP_HIGH_ALERT);
+  localStorage.setItem('temp_low', TEMP_LOW_ALERT);
+
+  closeConfig();
+  document.getElementById('stat-interval').textContent = (POLL_MS/1000).toFixed(1) + 's';
+  restartPoll();
+  log('ok', 'Config saved. Connecting to ' + ESP_IP);
+  showToast('success', '✓ Configuration saved!');
+}
+
+// ── Toast Notifications ──────────────────────────────────────────────────
+function showToast(type, message) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `
+    <span>${message}</span>
+    <button class="toast-close" onclick="this.parentElement.remove()">✕</button>
+  `;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.remove();
+  }, 5000);
+}
+
+// ── Logging ──────────────────────────────────────────────────────────────
+function log(type, msg) {
+  const ul  = document.getElementById('log-list');
+  const li  = document.createElement('li');
+  li.classList.add('ev-' + type);
+  const now = new Date();
+  const ts  = now.toTimeString().slice(0,8);
+  li.innerHTML = `<span class="ts">${ts}</span><span class="msg">${msg}</span>`;
+  ul.prepend(li);
+  while (ul.children.length > 60) ul.removeChild(ul.lastChild);
+}
+
+// ── Uptime Formatter ─────────────────────────────────────────────────────
+function fmtUptime(s) {
+  if (s < 60)   return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+}
+
+// ── Chart Initialization ─────────────────────────────────────────────────
+function initChart() {
+  const ctx = document.getElementById('tempHumidityChart').getContext('2d');
+  chartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: 'Temperature (°C)',
+          data: [],
+          borderColor: '#00e5ff',
+          backgroundColor: 'rgba(0, 229, 255, 0.1)',
+          tension: 0.4,
+          fill: true,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Humidity (%)',
+          data: [],
+          borderColor: '#ff6b35',
+          backgroundColor: 'rgba(255, 107, 53, 0.1)',
+          tension: 0.4,
+          fill: true,
+          yAxisID: 'y1',
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          labels: {
+            color: '#c8d8e8',
+            font: { family: "'Share Tech Mono', monospace", size: 11 }
+          }
+        }
+      },
+      scales: {
+        y: {
+          type: 'linear',
+          display: true,
+          position: 'left',
+          ticks: { color: '#4a5568' },
+          grid: { color: 'rgba(30, 37, 48, 0.3)' }
+        },
+        y1: {
+          type: 'linear',
+          display: true,
+          position: 'right',
+          ticks: { color: '#4a5568' },
+          grid: { drawOnChartArea: false },
+        },
+        x: {
+          ticks: { color: '#4a5568' },
+          grid: { color: 'rgba(30, 37, 48, 0.3)' }
+        }
+      }
+    }
+  });
+}
+
+// ── Update Chart ─────────────────────────────────────────────────────────
+function updateChart(temp, humidity) {
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString().slice(0, 5);
+
+  sensorHistory.push({ time: timeStr, temp: temp, humidity: humidity });
+  if (sensorHistory.length > MAX_HISTORY) sensorHistory.shift();
+
+  if (chartInstance) {
+    chartInstance.data.labels = sensorHistory.map(d => d.time);
+    chartInstance.data.datasets[0].data = sensorHistory.map(d => d.temp);
+    chartInstance.data.datasets[1].data = sensorHistory.map(d => d.humidity);
+    chartInstance.update();
+  }
+}
+
+// ── Fetch Data ───────────────────────────────────────────────────────────
+async function fetchData() {
+  const url = `http://${ESP_IP}/data`;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+
+    // Connection status
+    document.getElementById('conn-text').textContent = 'ONLINE';
+    document.getElementById('conn-pill').style.color = 'var(--ok)';
+    document.getElementById('conn-pill').querySelector('.dot').style.background = 'var(--ok)';
+
+    // Temperature
+    const t = parseFloat(d.temperature).toFixed(1);
+    document.getElementById('temp-val').textContent = t;
+    document.getElementById('temp-panel').classList.remove('temp-hot', 'temp-cold');
+    
+    if (parseFloat(t) >= TEMP_HIGH_ALERT) {
+      document.getElementById('temp-panel').classList.add('temp-hot');
+      showToast('alert', `🔥 High temperature: ${t}°C`);
+      log('alert', `⚠️ TEMP ALERT: ${t}°C (threshold: ${TEMP_HIGH_ALERT}°C)`);
+    } else if (parseFloat(t) <= TEMP_LOW_ALERT) {
+      document.getElementById('temp-panel').classList.add('temp-cold');
+      showToast('alert', `❄️ Low temperature: ${t}°C`);
+      log('alert', `⚠️ TEMP ALERT: ${t}°C (threshold: ${TEMP_LOW_ALERT}°C)`);
+    }
+
+    // Humidity
+    const h = parseFloat(d.humidity).toFixed(1);
+    document.getElementById('hum-val').textContent = h;
+
+    // Update chart
+    updateChart(parseFloat(t), parseFloat(h));
+
+    // Motion
+    const motion = d.motionActive;
+    const ring   = document.getElementById('motion-ring');
+    const inner  = document.getElementById('motion-inner');
+    const mtext  = document.getElementById('motion-text');
+    ring.classList.toggle('active', motion);
+    inner.textContent = motion ? 'PRESENCE' : 'IDLE';
+    mtext.classList.toggle('active', motion);
+    mtext.textContent = motion ? 'MOTION DETECTED' : 'NO MOTION';
+
+    // Captures
+    const caps = parseInt(d.captureCount);
+    document.getElementById('cap-count').textContent = caps;
+    document.getElementById('stat-caps').textContent = caps;
+
+    if (caps > prevCapCount) {
+      prevCapCount = caps;
+      refreshSnapshot();
+      log('motion', `Motion capture #${caps} triggered`);
+      showToast('motion', `📷 Capture #${caps} detected!`);
+    }
+
+    // Stats
+    document.getElementById('stat-reads').textContent  = d.readingCount;
+    document.getElementById('stat-uptime').textContent = fmtUptime(parseInt(d.uptime_s));
+    document.getElementById('stat-interval').textContent = (POLL_MS/1000).toFixed(1) + 's';
+
+    // Log periodic readings
+    if (d.readingCount % 5 === 0)
+      log('temp', `T=${t}°C  H=${h}%`);
+
+  } catch (e) {
+    document.getElementById('conn-text').textContent = 'OFFLINE';
+    document.getElementById('conn-pill').style.color = 'var(--warn)';
+    document.getElementById('conn-pill').querySelector('.dot').style.background = 'var(--warn)';
+    log('motion', 'Connection failed: ' + e.message);
+  }
+}
+
+// ── Refresh Snapshot ─────────────────────────────────────────────────────
+function refreshSnapshot() {
+  const img = document.getElementById('snap-img');
+  const ph  = document.getElementById('snap-placeholder');
+  const src = `http://${ESP_IP}/snapshot?t=${Date.now()}`;
+  img.onload  = () => { ph.style.display = 'none'; };
+  img.onerror = () => {};
+  img.src = src;
+  document.getElementById('cap-time').textContent = new Date().toLocaleTimeString();
+}
+
+// ── Live Stream ──────────────────────────────────────────────────────────
+function startLiveStream() {
+  setInterval(() => {
+    const img = document.getElementById('snap-img');
+    if (img) {
+      const src = `http://${ESP_IP}/snapshot?t=${Date.now()}`;
+      img.src = src;
+    }
+  }, 500);
+}
+
+// ── Start Polling ────────────────────────────────────────────────────────
+function restartPoll() {
+  if (pollTimer) clearInterval(pollTimer);
+  fetchData();
+  pollTimer = setInterval(fetchData, POLL_MS);
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+log('ok', 'Dashboard loaded. Target: ' + ESP_IP);
+initChart();
+restartPoll();
+startLiveStream();
+</script>
+</body>
+</html>
