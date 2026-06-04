@@ -2,7 +2,6 @@
 
 ![Platform](https://img.shields.io/badge/Platform-ESP32-blue)
 ![Framework](https://img.shields.io/badge/Framework-Arduino-orange)
-![License](https://img.shields.io/badge/License-MIT-green)
 
 A lightweight IoT monitoring system built with an ESP32-CAM, HLK-LD1020-P mmWave radar sensor, and AHT30 temperature/humidity sensor. The system provides real-time environmental monitoring, motion detection, image capture, and a responsive web dashboard.
 
